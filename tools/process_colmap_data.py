@@ -31,9 +31,27 @@ from tools.colmap_read_model import read_cameras_binary, read_images_binary, rea
 # params
 project_path = '../room'
 
-# cameras = read_cameras_binary(os.path.join(path, "cameras" + ext))
-# images = read_images_binary(os.path.join(path, "images" + ext))
-# points3D = read_points3d_binary(os.path.join(path, "points3D") + ext)
+
+def colmap_images_to_pose(img_vals):
+    # colmap quat has (w, x, y, z) and scipy needs (x, y, z, w)
+    qvec = [0, 0, 0, 0]
+    qvec[3] = img_vals.qvec[0]
+    qvec[:3] = img_vals.qvec[1:]
+    rot_mat = R.from_quat(qvec).as_matrix()
+    cam_pose = np.eye(4)
+    cam_pose[:3, :3] = rot_mat
+    cam_pose[:3, 3] = img_vals.tvec.T
+
+    return cam_pose
+
+def colmap_cames_to_intrinsics(cam_vals, ori_size=(4032, 3024), size=(640, 480)):
+    cam_intrinsic = np.eye(3)
+    cam_intrinsic[0, 2] = cam_vals.params[1]  / (ori_size[0] / size[0])
+    cam_intrinsic[1, 2] = cam_vals.params[2]  / (ori_size[1] / size[1])
+    cam_intrinsic[0, 0] = cam_vals.params[0]  / (ori_size[0] / size[0])
+    cam_intrinsic[1, 1] = cam_vals.params[0]  / (ori_size[1] / size[1])
+
+    return cam_intrinsic
 
 def process_data(data_path, data_source='COLMAP', window_size=9, min_angle=15, min_distance=0.1, ori_size=(4032, 3024), size=(640, 480)):
     image_path = os.path.join(data_path, 'images')
@@ -51,14 +69,8 @@ def process_data(data_path, data_source='COLMAP', window_size=9, min_angle=15, m
     last_pose = None
 
     for id in tqdm(cam_pose_dict.keys()):
-        cam_vals = cam_pose_dict[id]
-        qvec = [0, 0, 0, 0]
-        qvec[3] = cam_vals.qvec[0]
-        qvec[:3] = cam_vals.qvec[1:]
-        rot_mat = R.from_quat(qvec).as_matrix()
-        cam_pose = np.eye(4)
-        cam_pose[:3, :3] = rot_mat
-        cam_pose[:3, 3] = cam_vals.tvec.T
+        img_vals = cam_pose_dict[id]
+        cam_pose = colmap_images_to_pose(img_vals)
 
         if count == 0:
             ids.append(id)
@@ -95,26 +107,16 @@ def process_data(data_path, data_source='COLMAP', window_size=9, min_angle=15, m
             if not init:
                 trans = cam_pose_dict[id].tvec - [0, 0, 1.5]
                 init = True
-            cam_vals = cam_pose_dict[id]
-            qvec = [0, 0, 0, 0]
-            qvec[3] = cam_vals.qvec[0]
-            qvec[:3] = cam_vals.qvec[1:]
-            rot_mat = R.from_quat(qvec).as_matrix()
-            cam_pose = np.eye(4)
-            cam_pose[:3, :3] = rot_mat
-            cam_pose[:3, 3] = (cam_vals.tvec - trans).T
-
+            img_vals = cam_pose_dict[id]
+            cam_pose = colmap_images_to_pose(img_vals)
+            cam_pose[:3, 3] = (img_vals.tvec - trans).T ## moving X-Y plane?
             poses.append(cam_pose)
 
             cam_intrinsic_vals = cam_intrinsic_dict[cam_pose_dict[id].camera_id]
-            cam_intrinsic = np.eye(3)
-            cam_intrinsic[0, 2] = cam_intrinsic_vals.params[1] #/ (ori_size[0] / size[0])
-            cam_intrinsic[1, 2] = cam_intrinsic_vals.params[2] #/ (ori_size[1] / size[1])
-            cam_intrinsic[0, 0] = cam_intrinsic_vals.params[0] #/ (ori_size[0] / size[0])
-            cam_intrinsic[1, 1] = cam_intrinsic_vals.params[0] #/ (ori_size[1] / size[1])
+            cam_intrinsic = colmap_cames_to_intrinsics(cam_intrinsic_vals, ori_size, size)
 
             intrinsics.append(cam_intrinsic)
-            path.append(cam_vals.name)
+            path.append(img_vals.name)
         fragments.append({
             'scene': data_path.split('/')[-1],
             'fragment_id': i,

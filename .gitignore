@@ -2,6 +2,7 @@
 .vscode
 outputs
 *.bin
+*.npy
 checkpoints
 data/
 results/
